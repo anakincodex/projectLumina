@@ -1,0 +1,198 @@
+{
+  "file_path": "examples/01_clear_leak_scaler_before_split.ipynb",
+  "execution_mode": "FALLBACK_DETERMINISTIC",
+  "steps": [
+    {
+      "step_number": 1,
+      "thought": "Investigating potential Type 1 preprocessing fit before split.",
+      "tool_name": "check_fit_before_split",
+      "tool_args": {},
+      "observation": "Evaluation Leakage (Type 1): Preprocessing transformer 'scaler (StandardScaler)' is fitted at line 15 before the train/test split at line 21. Information from the test fold leaks into training features.",
+      "evidence_id": "ev_fit_before_split_34d8b15c"
+    },
+    {
+      "step_number": 1,
+      "thought": "Investigating potential Type 1 preprocessing fit before split.",
+      "tool_name": "check_fit_before_split",
+      "tool_args": {},
+      "observation": "Evaluation Leakage (Type 1): Preprocessing transformer 'selector (SelectKBest)' is fitted at line 18 before the train/test split at line 21. Information from the test fold leaks into training features.",
+      "evidence_id": "ev_fit_before_split_7c8c07d6"
+    }
+  ],
+  "hypotheses_evaluated": [
+    {
+      "hypothesis_id": "hyp_1",
+      "leak_type": "TYPE_1_FIT_BEFORE_SPLIT",
+      "description": "Check if transformers or feature selectors are fitted prior to train/test split.",
+      "suspected_line": null,
+      "tool_to_call": "check_fit_before_split",
+      "tool_args": {}
+    },
+    {
+      "hypothesis_id": "hyp_2",
+      "leak_type": "TYPE_2_CROSS_SPLIT_OVERLAP",
+      "description": "Check if premature duplication or oversampling occurred before split.",
+      "suspected_line": null,
+      "tool_to_call": "check_split_overlap",
+      "tool_args": {}
+    },
+    {
+      "hypothesis_id": "hyp_3",
+      "leak_type": "TYPE_3_TEST_SET_CONTAMINATION",
+      "description": "Check if test set variables are used in training, tuning, or early stopping.",
+      "suspected_line": null,
+      "tool_to_call": "trace_test_usage",
+      "tool_args": {}
+    }
+  ],
+  "confirmed_evidence": [
+    {
+      "evidence_id": "ev_fit_before_split_34d8b15c",
+      "tool_name": "check_fit_before_split",
+      "status": "FOUND_LEAK",
+      "confidence": 1.0,
+      "summary": "Evaluation Leakage (Type 1): Preprocessing transformer 'scaler (StandardScaler)' is fitted at line 15 before the train/test split at line 21. Information from the test fold leaks into training features.",
+      "offending_span": {
+        "file_path": "examples/01_clear_leak_scaler_before_split.ipynb",
+        "start_line": 15,
+        "end_line": 15,
+        "cell_index": 3,
+        "cell_line": 3,
+        "code_snippet": "X_scaled = scaler.fit_transform(X)"
+      },
+      "context_span": {
+        "file_path": "examples/01_clear_leak_scaler_before_split.ipynb",
+        "start_line": 21,
+        "end_line": 23,
+        "cell_index": 4,
+        "cell_line": 2,
+        "code_snippet": "X_train, X_test, y_train, y_test = train_test_split(\n    X_selected, y, test_size=0.30, random_state=42\n)"
+      },
+      "metrics": {
+        "leak_type": "TYPE_1_FIT_BEFORE_SPLIT",
+        "transformer": "scaler (StandardScaler)",
+        "fit_line": 15,
+        "split_line": 21,
+        "fit_inputs": [
+          "X",
+          "scaler"
+        ],
+        "fit_outputs": [
+          "X_scaled"
+        ]
+      },
+      "suggested_fix": "Refactor 'scaler (StandardScaler)' to fit only on X_train after splitting, or encapsulate inside a sklearn.pipeline.Pipeline."
+    },
+    {
+      "evidence_id": "ev_fit_before_split_7c8c07d6",
+      "tool_name": "check_fit_before_split",
+      "status": "FOUND_LEAK",
+      "confidence": 1.0,
+      "summary": "Evaluation Leakage (Type 1): Preprocessing transformer 'selector (SelectKBest)' is fitted at line 18 before the train/test split at line 21. Information from the test fold leaks into training features.",
+      "offending_span": {
+        "file_path": "examples/01_clear_leak_scaler_before_split.ipynb",
+        "start_line": 18,
+        "end_line": 18,
+        "cell_index": 3,
+        "cell_line": 6,
+        "code_snippet": "X_selected = selector.fit_transform(X_scaled, y)"
+      },
+      "context_span": {
+        "file_path": "examples/01_clear_leak_scaler_before_split.ipynb",
+        "start_line": 21,
+        "end_line": 23,
+        "cell_index": 4,
+        "cell_line": 2,
+        "code_snippet": "X_train, X_test, y_train, y_test = train_test_split(\n    X_selected, y, test_size=0.30, random_state=42\n)"
+      },
+      "metrics": {
+        "leak_type": "TYPE_1_FIT_BEFORE_SPLIT",
+        "transformer": "selector (SelectKBest)",
+        "fit_line": 18,
+        "split_line": 21,
+        "fit_inputs": [
+          "X_scaled",
+          "selector",
+          "y"
+        ],
+        "fit_outputs": [
+          "X_selected"
+        ]
+      },
+      "suggested_fix": "Refactor 'selector (SelectKBest)' to fit only on X_train after splitting, or encapsulate inside a sklearn.pipeline.Pipeline."
+    }
+  ],
+  "suspected_evidence": [],
+  "clean_checks": [
+    {
+      "evidence_id": "ev_overlap_ast_770eec3e",
+      "tool_name": "check_split_overlap",
+      "status": "CLEAN",
+      "confidence": 0.85,
+      "summary": "No premature duplication or oversampling operations detected prior to split in AST.",
+      "offending_span": null,
+      "context_span": null,
+      "metrics": {},
+      "suggested_fix": null
+    },
+    {
+      "evidence_id": "ev_test_usage_59aae65f",
+      "tool_name": "trace_test_usage",
+      "status": "CLEAN",
+      "confidence": 1.0,
+      "summary": "Test set variables are strictly isolated to evaluation operations (no training/tuning contamination).",
+      "offending_span": null,
+      "context_span": null,
+      "metrics": {},
+      "suggested_fix": null
+    }
+  ],
+  "verification_results": [
+    {
+      "status": "CONFIRMED",
+      "primary_metric_name": "test_auc",
+      "original_mean": 0.7602,
+      "original_std": 0.0,
+      "patched_mean": 0.5034,
+      "patched_std": 0.0,
+      "mean_delta": -0.2568,
+      "seed_noise_std": 0.0,
+      "is_significant": true,
+      "seed_runs": [
+        {
+          "seed": 42,
+          "original_metric": 0.7602,
+          "patched_metric": 0.5034,
+          "delta": -0.2568
+        }
+      ],
+      "original_code": "import numpy as np\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.feature_selection import SelectKBest, f_classif\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import accuracy_score, roc_auc_score\n\n# Generate 200 samples with 1000 noisy/uninformative features\nnp.random.seed(42)\nX = np.random.randn(200, 1000)\ny = np.random.randint(0, 2, size=200)\n\n# FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\nscaler = StandardScaler()\nX_scaled = scaler.fit_transform(X)\n\nselector = SelectKBest(score_func=f_classif, k=10)\nX_selected = selector.fit_transform(X_scaled, y)\n\n# Split happens AFTER preprocessing and feature selection\nX_train, X_test, y_train, y_test = train_test_split(\n    X_selected, y, test_size=0.30, random_state=42\n)\n\nclf = LogisticRegression(random_state=42)\nclf.fit(X_train, y_train)\n\ny_pred = clf.predict(X_test)\ny_prob = clf.predict_proba(X_test)[:, 1]\n\ntest_acc = accuracy_score(y_test, y_pred)\ntest_auc = roc_auc_score(y_test, y_prob)\nprint(f\"Test Accuracy: {test_acc:.4f}\")\nprint(f\"Test ROC-AUC: {test_auc:.4f}\")\n",
+      "patched_code": "import numpy as np\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.feature_selection import SelectKBest, f_classif\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import accuracy_score, roc_auc_score\n\n# Generate 200 samples with 1000 noisy/uninformative features\nnp.random.seed(42)\nX = np.random.randn(200, 1000)\ny = np.random.randint(0, 2, size=200)\n\n# FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\n\n\n# Split happens AFTER preprocessing and feature selection\n# --- [REPROVE PATCH: Split raw data first, fit transformers on X_train only] ---\nX_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)\n\nscaler = StandardScaler()\nX_train = scaler.fit_transform(X_train)\nX_test = scaler.transform(X_test)\n\nselector = SelectKBest(score_func=f_classif, k=10)\nX_train = selector.fit_transform(X_train, y_train)\nX_test = selector.transform(X_test)\n# --------------------------------------------------------------------------------\n\n\nclf = LogisticRegression(random_state=42)\nclf.fit(X_train, y_train)\n\ny_pred = clf.predict(X_test)\ny_prob = clf.predict_proba(X_test)[:, 1]\n\ntest_acc = accuracy_score(y_test, y_pred)\ntest_auc = roc_auc_score(y_test, y_prob)\nprint(f\"Test Accuracy: {test_acc:.4f}\")\nprint(f\"Test ROC-AUC: {test_auc:.4f}\")",
+      "diff": "--- original_leaked.py\n+++ reprove_patched.py\n@@ -11,16 +11,21 @@\n y = np.random.randint(0, 2, size=200)\n \n # FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\n+\n+\n+# Split happens AFTER preprocessing and feature selection\n+# --- [REPROVE PATCH: Split raw data first, fit transformers on X_train only] ---\n+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)\n+\n scaler = StandardScaler()\n-X_scaled = scaler.fit_transform(X)\n+X_train = scaler.fit_transform(X_train)\n+X_test = scaler.transform(X_test)\n \n selector = SelectKBest(score_func=f_classif, k=10)\n-X_selected = selector.fit_transform(X_scaled, y)\n+X_train = selector.fit_transform(X_train, y_train)\n+X_test = selector.transform(X_test)\n+# --------------------------------------------------------------------------------\n \n-# Split happens AFTER preprocessing and feature selection\n-X_train, X_test, y_train, y_test = train_test_split(\n-    X_selected, y, test_size=0.30, random_state=42\n-)\n \n clf = LogisticRegression(random_state=42)\n clf.fit(X_train, y_train)\n@@ -31,4 +36,4 @@\n test_acc = accuracy_score(y_test, y_pred)\n test_auc = roc_auc_score(y_test, y_prob)\n print(f\"Test Accuracy: {test_acc:.4f}\")\n-print(f\"Test ROC-AUC: {test_auc:.4f}\")\n+print(f\"Test ROC-AUC: {test_auc:.4f}\")",
+      "reason": "CONFIRMED evaluation leakage: Correcting the flaw caused an empirical metric drop of -0.2568 in test_auc (from 0.7602 down to 0.5034) across 1 random seeds, exceeding seed noise (sigma=0.0000)."
+    },
+    {
+      "status": "CONFIRMED",
+      "primary_metric_name": "test_auc",
+      "original_mean": 0.7602,
+      "original_std": 0.0,
+      "patched_mean": 0.5034,
+      "patched_std": 0.0,
+      "mean_delta": -0.2568,
+      "seed_noise_std": 0.0,
+      "is_significant": true,
+      "seed_runs": [
+        {
+          "seed": 42,
+          "original_metric": 0.7602,
+          "patched_metric": 0.5034,
+          "delta": -0.2568
+        }
+      ],
+      "original_code": "import numpy as np\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.feature_selection import SelectKBest, f_classif\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import accuracy_score, roc_auc_score\n\n# Generate 200 samples with 1000 noisy/uninformative features\nnp.random.seed(42)\nX = np.random.randn(200, 1000)\ny = np.random.randint(0, 2, size=200)\n\n# FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\nscaler = StandardScaler()\nX_scaled = scaler.fit_transform(X)\n\nselector = SelectKBest(score_func=f_classif, k=10)\nX_selected = selector.fit_transform(X_scaled, y)\n\n# Split happens AFTER preprocessing and feature selection\nX_train, X_test, y_train, y_test = train_test_split(\n    X_selected, y, test_size=0.30, random_state=42\n)\n\nclf = LogisticRegression(random_state=42)\nclf.fit(X_train, y_train)\n\ny_pred = clf.predict(X_test)\ny_prob = clf.predict_proba(X_test)[:, 1]\n\ntest_acc = accuracy_score(y_test, y_pred)\ntest_auc = roc_auc_score(y_test, y_prob)\nprint(f\"Test Accuracy: {test_acc:.4f}\")\nprint(f\"Test ROC-AUC: {test_auc:.4f}\")\n",
+      "patched_code": "import numpy as np\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.feature_selection import SelectKBest, f_classif\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import accuracy_score, roc_auc_score\n\n# Generate 200 samples with 1000 noisy/uninformative features\nnp.random.seed(42)\nX = np.random.randn(200, 1000)\ny = np.random.randint(0, 2, size=200)\n\n# FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\n\n\n# Split happens AFTER preprocessing and feature selection\n# --- [REPROVE PATCH: Split raw data first, fit transformers on X_train only] ---\nX_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)\n\nscaler = StandardScaler()\nX_train = scaler.fit_transform(X_train)\nX_test = scaler.transform(X_test)\n\nselector = SelectKBest(score_func=f_classif, k=10)\nX_train = selector.fit_transform(X_train, y_train)\nX_test = selector.transform(X_test)\n# --------------------------------------------------------------------------------\n\n\nclf = LogisticRegression(random_state=42)\nclf.fit(X_train, y_train)\n\ny_pred = clf.predict(X_test)\ny_prob = clf.predict_proba(X_test)[:, 1]\n\ntest_acc = accuracy_score(y_test, y_pred)\ntest_auc = roc_auc_score(y_test, y_prob)\nprint(f\"Test Accuracy: {test_acc:.4f}\")\nprint(f\"Test ROC-AUC: {test_auc:.4f}\")",
+      "diff": "--- original_leaked.py\n+++ reprove_patched.py\n@@ -11,16 +11,21 @@\n y = np.random.randint(0, 2, size=200)\n \n # FLAGGED LEAK: Preprocessing & feature selection fitted on entire dataset before split\n+\n+\n+# Split happens AFTER preprocessing and feature selection\n+# --- [REPROVE PATCH: Split raw data first, fit transformers on X_train only] ---\n+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)\n+\n scaler = StandardScaler()\n-X_scaled = scaler.fit_transform(X)\n+X_train = scaler.fit_transform(X_train)\n+X_test = scaler.transform(X_test)\n \n selector = SelectKBest(score_func=f_classif, k=10)\n-X_selected = selector.fit_transform(X_scaled, y)\n+X_train = selector.fit_transform(X_train, y_train)\n+X_test = selector.transform(X_test)\n+# --------------------------------------------------------------------------------\n \n-# Split happens AFTER preprocessing and feature selection\n-X_train, X_test, y_train, y_test = train_test_split(\n-    X_selected, y, test_size=0.30, random_state=42\n-)\n \n clf = LogisticRegression(random_state=42)\n clf.fit(X_train, y_train)\n@@ -31,4 +36,4 @@\n test_acc = accuracy_score(y_test, y_pred)\n test_auc = roc_auc_score(y_test, y_prob)\n print(f\"Test Accuracy: {test_acc:.4f}\")\n-print(f\"Test ROC-AUC: {test_auc:.4f}\")\n+print(f\"Test ROC-AUC: {test_auc:.4f}\")",
+      "reason": "CONFIRMED evaluation leakage: Correcting the flaw caused an empirical metric drop of -0.2568 in test_auc (from 0.7602 down to 0.5034) across 1 random seeds, exceeding seed noise (sigma=0.0000)."
+    }
+  ]
+}

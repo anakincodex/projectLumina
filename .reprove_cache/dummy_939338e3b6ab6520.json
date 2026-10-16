@@ -1,0 +1,19 @@
+{
+  "file_path": "examples/dummy.py",
+  "execution_mode": "LLM_OLLAMA",
+  "steps": [
+    {
+      "step_number": 1,
+      "thought": "Checking fits",
+      "tool_name": "check_fit_before_split",
+      "tool_args": {},
+      "observation": "Clean",
+      "evidence_id": null
+    }
+  ],
+  "hypotheses_evaluated": [],
+  "confirmed_evidence": [],
+  "suspected_evidence": [],
+  "clean_checks": [],
+  "verification_results": []
+}

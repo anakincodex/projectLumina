@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "leakhound"
+name = "reprove"
 version = "0.1.0"
 description = "Autonomous open-source agent that audits ML experiments for evaluation leakage."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
-    { name = "LEAKHOUND Team" }
+    { name = "REPROVE Team" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-leakhound = "leakhound.cli.main:app"
+reprove = "reprove.cli.main:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
