@@ -1,4 +1,4 @@
-# 🐕 LEAKHOUND
+#  REPROVE
 
 > **The LLM proposes, tools verify.**
 > An open-source autonomous agent that audits Machine Learning experiments for evaluation leakage, confirms findings with deterministic evidence tools and controlled reruns, and produces reproducible audit reports.
@@ -8,11 +8,11 @@
 
 ---
 
-## 🎯 What is LEAKHOUND?
+##  What is REPROVE?
 
 Evaluation leakage quietly ruins ML experiments: inflated validation/test metrics create a false sense of performance that collapses in production.
 
-Unlike generic code scanners that produce hallucinated or noisy warnings, **LEAKHOUND** operates on a strict non-negotiable principle:
+Unlike generic code scanners that produce hallucinated or noisy warnings, **REPROVE** operates on a strict non-negotiable principle:
 **No finding may be labelled `CONFIRMED` unless a deterministic tool or a controlled rerun produced empirical evidence.**
 
 Every claim must be anchored to concrete evidence. If a check cannot run, it is reported as `NOT_VERIFIED` with the exact blocker explained.
@@ -28,7 +28,7 @@ Every claim must be anchored to concrete evidence. If a check cannot run, it is 
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
                                ┌────────────────────────────────┐
@@ -71,35 +71,35 @@ Every claim must be anchored to concrete evidence. If a check cannot run, it is 
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Installation
 
 ```bash
-git clone https://github.com/anakincodex/projectLumina.git leakhound
-cd leakhound
+git clone https://github.com/anakincodex/projectLumina.git REPROVE
+cd REPROVE
 pip install -e .
 ```
 
 ### Run an Audit
 
 ```bash
-leakhound audit examples/01_clear_leak_scaler_before_split.ipynb --model qwen2.5-coder:7b
+REPROVE audit examples/01_clear_leak_scaler_before_split.ipynb --model qwen2.5-coder:7b
 ```
 
 Or launch the interactive demo UI:
 
 ```bash
-streamlit run src/leakhound/cli/streamlit_app.py
+streamlit run src/REPROVE/cli/streamlit_app.py
 ```
 
 ---
 
-## 📂 Project Structure
+##  Project Structure
 
 ```
-leakhound/
-├── src/leakhound/
+REPROVE/
+├── src/REPROVE/
 │   ├── parser/         # AST (ast/libcst) + nbformat -> experiment graph
 │   ├── agent/          # Ollama / Qwen2.5-Coder investigator + replay cache
 │   ├── tools/          # Deterministic evidence checkers (no LLM)
@@ -117,6 +117,6 @@ leakhound/
 
 ---
 
-## ⚖️ License
+##  License
 
-LEAKHOUND is distributed under the [Apache License 2.0](LICENSE).
+REPROVE is distributed under the [Apache License 2.0](LICENSE).
