@@ -1,194 +1,163 @@
 # 🔬 REPROVE
 
-> **The LLM proposes, tools verify.**  
-> An open-source autonomous agent that audits Machine Learning experiments for evaluation leakage, proves findings with deterministic evidence tools and controlled counterfactual reruns, and produces reproducible audit reports.
+> **The LLM proposes, tools verify.**
+> An open-source agent that audits machine-learning experiments for **evaluation leakage**, proves each finding with deterministic tools and a **controlled rerun of the experiment with the flaw fixed**, and writes a reproducible audit report.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-green.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/Tests-34%2F34%20Passing-brightgreen.svg)](tests/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-green.svg)](pyproject.toml)
 [![Hackathon](https://img.shields.io/badge/Hackathon-Best%20Open--Source%20AI%20Project-orange.svg)](docs/DEMO_SCRIPT.md)
 
 ---
 
-## 🎯 What is REPROVE?
+## 🎯 What it does
 
-Evaluation leakage quietly ruins Machine Learning systems: inflated validation and test metrics create an illusion of model generalization that collapses in production.
+Leakage makes a model look better than it is: test-set information sneaks into training, the score is inflated, and the model disappoints in production. REPROVE:
 
-Unlike generic code scanners that spit out noisy warnings or cloud LLMs that hallucinate line numbers, **REPROVE** is governed by a strict non-negotiable principle:
+1. **Investigates** a notebook or script with an open-weight LLM (Qwen2.5-Coder via [Ollama](https://ollama.com), runs locally, no API keys). The LLM reads the code and **chooses** which evidence tool to run next.
+2. **Gathers evidence** with deterministic tools (AST analysis and row hashing of the real train/test split). No LLM output is ever treated as evidence.
+3. **Verifies** by re-running the experiment over 5 seeds, original vs automatically corrected code, and testing whether the corrected version is significantly worse (one-sided paired t-test, p < 0.05).
+4. **Reports** each finding as `CONFIRMED`, `NOT_CONFIRMED` or `SUSPECTED`, with code locations, tool evidence, per-seed results, the suggested fix as a diff, and reproduce commands.
 
-> **No finding may be labelled `CONFIRMED` unless a deterministic tool or a controlled rerun produced empirical evidence.**
+### What the statuses mean
 
-Every number in a REPROVE audit report comes from real executed outputs. If a check cannot run, it is reported as `NOT_VERIFIED` with the exact obstacle explained.
+| Status | Meaning |
+| :--- | :--- |
+| `CONFIRMED` | A tool found the leakage pattern **and** fixing it made the score significantly worse across seeds. The reported metric is inflated. |
+| `NOT_CONFIRMED` | The pattern is in the code, but fixing it did not change the score beyond seed noise. Still worth fixing. |
+| `SUSPECTED` | A tool found the pattern, but no controlled rerun was possible (no automatic fix for that pattern, the code failed, or no metric was found). The reason is always stated. |
 
----
-
-## 📊 Benchmark Evaluation Matrix
-
-REPROVE was evaluated across a ground-truth suite of ML pipelines (including textbook Hastie & Tibshirani feature selection leaks, clean encapsulated pipelines, and subtle cross-split sample duplications):
-
-| Benchmark Case | Description | Ground Truth | REPROVE Verdict | Measured Delta (Δ) | Runtime | Result |
-| :---: | :--- | :---: | :---: | :---: | :---: | :---: |
-| **BM-01** | `01_clear_leak_scaler_before_split.ipynb` | **LEAK (Type 1)** | `CONFIRMED` | **`-0.2568`** | 0.027s | ✅ **CORRECT** |
-| **BM-02** | `02_clean_pipeline_no_leak.ipynb` | **CLEAN** | `CLEAN` | — | 0.001s | ✅ **CORRECT** |
-| **BM-03** | `03_subtle_leak_duplicate_split.ipynb` | **LEAK (Type 2)** | `SUSPECTED` | **`-0.0284`** | 0.001s | ✅ **CORRECT** |
-
-### Aggregate Classification Performance
-- **Precision**: **100.0%** (Zero false alarms on clean encapsulated pipelines)
-- **Recall**: **100.0%** (All leakage flaws detected and anchored)
-- **Specificity**: **100.0%**
-- **F1 Score**: **1.0000**
-- **Replay Audit Speed**: **0.030s**
+The status is assigned by code from the rerun statistics, **never by the LLM**.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ How it works
 
 ```
-                               ┌────────────────────────────────┐
-                               │   ML Notebook or Script (.py)   │
-                               └──────────────┬─────────────────┘
-                                              │
-                                              ▼
-                               ┌────────────────────────────────┐
-                               │     AST Parser & Tracer        │
-                               │   (Extracts Experiment Graph)  │
-                               └──────────────┬─────────────────┘
-                                              │
-                                              ▼
- ┌────────────────────────────────────────────────────────────────────────────────────────┐
- │                              Investigation Agent                                       │
- │           (Open-weight LLM e.g. Qwen2.5-Coder via Ollama / Replay Cache)               │
- │                                                                                        │
- │   1. Proposes Leak Hypotheses based on Graph summary                                   │
- │   2. Orchestrates Bounded Deterministic Tool Execution (<= 8 steps)                    │
- └─────────────────┬───────────────────────────────────────────────────┬──────────────────┘
-                   │                                                   │
-                   ▼                                                   ▼
- ┌───────────────────────────────────┐               ┌────────────────────────────────────┐
- │       Deterministic Tools         │               │     Controlled Verifier Engine     │
- │  • check_fit_before_split         │               │  • Patches pipeline (AST rewrite)  │
- │  • check_split_overlap            │               │  • Sandboxed rerun (Orig vs Patch) │
- │  • trace_test_usage               │               │  • Multi-seed delta & significance │
- └─────────────────┬─────────────────┘               └─────────────────┬──────────────────┘
-                   │                                                   │
-                   └─────────────────────┬─────────────────────────────┘
-                                         ▼
-                         ┌───────────────────────────────┐
-                         │   Audit Report (MD & HTML)    │
-                         │  • CONFIRMED vs SUSPECTED     │
-                         │  • AST Code Spans & Diffs     │
-                         │  • Empirical Metric Deltas    │
-                         │  • Full Reproducibility Proof │
-                         └───────────────────────────────┘
+ notebook / script ──► Parser (ast + nbformat) ──► experiment graph with exact cell/line spans
+                                   │
+                                   ▼
+        Investigation agent: open-weight LLM (Ollama, JSON-schema constrained output)
+        picks a tool ─► reads the result ─► picks the next tool ... (max 8 steps)
+        + coverage guard: any core check the agent skipped is run automatically
+        + invalid LLM output: retried once, then deterministic fallback (marked in the report)
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+  Deterministic evidence tools                Controlled rerun (verifier)
+  • check_fit_before_split  (AST)             • patcher rewrites YOUR code (AST-based)
+  • check_split_overlap     (row hashes of    • original vs corrected, 5 seeds,
+                             the real split)    separate processes with timeouts
+  • trace_test_usage        (AST)             • one-sided paired t-test on per-seed diffs
+              └────────────────────┬────────────────────┘
+                                   ▼
+          report.md / report.html / terminal / Streamlit dashboard
 ```
 
 ---
 
-## 🔬 Supported Scope
+## 🔬 Scope
 
-| Leak Type | Mechanism | Primary Tool | Empirical Verification Method |
-| :--- | :--- | :--- | :--- |
-| **Type 1: Fit Before Split** | Scalers, imputers, or selectors fit on entire dataset prior to splitting | `check_fit_before_split` | AST rewrite moving `.fit()` inside train split; multi-seed rerun measuring score drop |
-| **Type 2: Cross-Split Overlap** | Exact duplicate rows across train/test splits (e.g. premature oversampling) | `check_split_overlap` | AST deduplication of train split; multi-seed verification |
-| **Type 3: Test Contamination** | Test set variables passed into training, hyperparameter tuning (`GridSearchCV`) | `trace_test_usage` | AST inspection flagging contamination as `SUSPECTED` |
-| **Type 4: Target Leakage** | Feature with abnormal mathematical association with label | `check_target_correlation` | Correlation screening flagged for practitioner review |
+| Leak type | Detected by | Automatic fix + rerun |
+| :--- | :--- | :--- |
+| **Type 1:** scaler / imputer / encoder / PCA / feature selector fitted before `train_test_split` | `check_fit_before_split` (AST) | ✅ split first, re-fit each transformer on the training split only (`fit_transform`, `fit().transform()` and `fit()` + `transform()` forms) |
+| **Type 2:** identical rows in train and test | `check_split_overlap`: runs the experiment once and hashes the rows of the actual split | ✅ drop exact duplicate rows before splitting |
+| **Type 3:** test set used for training, early stopping (`eval_set=`), or choosing models / hyperparameters in a loop | `trace_test_usage` (AST) | ❌ reported as `SUSPECTED` with evidence (no automatic fix yet) |
+| Image folders: near-duplicate images across train/test | `check_image_folders_overlap` (perceptual hash) | ❌ evidence only |
+| Target leakage (feature that encodes the label) | not implemented | roadmap |
 
 ---
 
-## 🚀 Quick Start
+## 📊 Benchmark (small, written by the team)
 
-### 1. Installation
+Four planted-leak notebooks plus two "stress" scripts with unfamiliar variable names. Measured with `reprove benchmark --no-replay` (5 seeds). Numbers come from real runs.
+
+| Case | What it contains | Expected | REPROVE | Rerun result |
+| :--- | :--- | :---: | :---: | :--- |
+| BM-01 | `StandardScaler` + `SelectKBest` fitted before split (1000 noise features) | CONFIRMED | ✅ CONFIRMED | AUC 0.7705 → 0.4688 (−0.3017), worse on 5/5 seeds, p < 0.0001 |
+| BM-02 | Split first, sklearn `Pipeline` | CLEAN | ✅ CLEAN | – |
+| BM-03 | Rows duplicated before split (~35% of test rows are copies of training rows) | CONFIRMED | ✅ CONFIRMED | AUC 0.8875 → 0.7730 (−0.1145), worse on 5/5 seeds, p = 0.0098 |
+| BM-04 | `max_depth` chosen by test accuracy in a loop | SUSPECTED | ✅ SUSPECTED | no automatic fix (by design) |
+| BM-05 | Real but harmless `MinMaxScaler` leak, different variable names | NOT_CONFIRMED | ✅ NOT_CONFIRMED | accuracy 0.9367 → 0.9267 (−0.0100), p = 0.10 |
+| BM-06 | Clean code that uses `pd.concat` to join columns | CLEAN | ✅ CLEAN | – |
+
+6/6 statuses match. This is a sanity check on cases we wrote ourselves, not a claim about accuracy on arbitrary code. Exact numbers can differ slightly between scikit-learn versions.
+
+---
+
+## 🚀 Quick start
 
 ```bash
 git clone https://github.com/anakincodex/projectLumina.git reprove
 cd reprove
-pip install -e .
+pip install -e ".[dev]"
+
+# Open-weight model (runs locally)
+ollama pull qwen2.5-coder:7b
+
+# Audit with the LLM agent (falls back to the deterministic plan if Ollama is not running)
+reprove audit examples/01_clear_leak_scaler_before_split.ipynb
+
+# Write report.md + report.html
+reprove audit examples/01_clear_leak_scaler_before_split.ipynb -o audit_reports --no-fail-on-leak
+
+# Dashboard
+reprove ui
+
+# Benchmark
+reprove benchmark --no-replay
 ```
 
-### 2. Audit an ML Experiment via CLI
+Useful flags: `--seeds 0,1,2,3,4` (at least 3), `--timeout 60` (seconds per run), `--model <ollama tag>`, `--verbose`.
 
-Audit a notebook using the instant presentation replay cache:
+### Replay for live demos
+
 ```bash
+# Before the demo, with Ollama running: record real agent runs
+reprove audit examples/01_clear_leak_scaler_before_split.ipynb --record --no-fail-on-leak
+# On stage: instant replay of exactly that recorded run
 reprove audit examples/01_clear_leak_scaler_before_split.ipynb --replay
 ```
 
-Or audit live with local open-weight LLMs via [Ollama](https://ollama.ai/):
-```bash
-# Pull model (optional, fallback engine engages if offline)
-ollama pull qwen2.5-coder:7b
-
-# Audit with live model
-reprove audit examples/01_clear_leak_scaler_before_split.ipynb --model qwen2.5-coder:7b
-```
-
-Export publication-ready Markdown and HTML audit reports:
-```bash
-reprove audit examples/01_clear_leak_scaler_before_split.ipynb --replay --output-dir ./audit_reports
-```
-
-### 3. Run Benchmark Matrix
-
-```bash
-reprove benchmark --replay
-```
-
-### 4. Interactive Live Demo Dashboard
-
-Launch the dark-mode Streamlit dashboard:
-```bash
-reprove ui
-# or: streamlit run src/reprove/cli/streamlit_app.py
-```
+A replay is keyed by a hash of the exact code, so an edited notebook never gets an old answer. The report says it is a replay and which mode produced it (LLM or fallback).
 
 ---
 
-## 🛠️ CI/CD Integration
+## ⚠️ Limitations (honest list)
 
-Block pull requests that introduce evaluation leakage into your ML repository:
+- **It executes the code it audits** (separate process, timeout). That is process isolation, not a security sandbox. Only audit code you trust.
+- Splits are recognised through `train_test_split`. Automatic fixes need the common `X_train, X_test, y_train, y_test = train_test_split(X, y, ...)` form. Anything else is reported as `SUSPECTED` with the reason.
+- The metric is read from variables such as `test_auc` / `test_acc`, or from `sklearn.metrics` calls. Without one, verification is reported as not possible (no numbers are invented).
+- Type 3 and image duplicates have detection only. Target leakage is not implemented.
+- The benchmark is small and was written by the team.
+
+---
+
+## 🛠️ CI usage
 
 ```yaml
-# .github/workflows/reprove-audit.yml
-name: REPROVE Leakage Audit
-on: [pull_request]
-
-jobs:
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-      - run: pip install -e .
-      - name: Run Audit with Fail-on-Leak
-        run: reprove audit notebooks/train.ipynb --replay --fail-on-leak
+# .github/workflows/reprove-audit.yml - CI has no Ollama, so this uses the deterministic fallback
+- run: pip install -e .
+- run: reprove audit notebooks/train.ipynb   # exits 1 when a leak is CONFIRMED
 ```
 
 ---
 
-## 📂 Project Structure
+## 📂 Project structure
 
 ```
-reprove/
-├── src/reprove/
-│   ├── parser/         # AST (libcst/ast) + nbformat -> experiment graph & code spans
-│   ├── agent/          # Ollama investigator, replay cache, bounded loop, fallback
-│   ├── tools/          # Deterministic evidence tools (hash overlap, fit tracing)
-│   ├── verifier/       # Controlled AST patcher & multi-seed subprocess runner
-│   ├── report/         # Markdown & self-contained HTML audit report generator
-│   ├── cli/            # Typer CLI (audit, benchmark, ui) & Streamlit dashboard
-│   └── evaluation.py   # Benchmark evaluation matrix (precision/recall runner)
-├── examples/           # Ground-truth planted-leak and clean benchmark notebooks
-├── tests/              # 34 pytest unit & integration tests
-├── docs/               # Architecture diagrams, master project plan & demo script
-├── DEVLOG.md           # Engineering log of decisions, issues, & resolutions
-├── LICENSE             # Apache-2.0
-├── pyproject.toml
-└── README.md
+src/reprove/
+├── parser/        # ast + nbformat -> experiment graph with notebook cell/line mapping
+├── agent/         # Ollama agent, shared audit engine (coverage guard), fallback, replay cache
+├── tools/         # deterministic evidence tools (no LLM)
+├── verifier/      # AST patcher, subprocess runner with metric harness, paired t-test
+├── report/        # Markdown + self-contained HTML reports
+├── cli/           # Typer CLI (audit, benchmark, ui) + Streamlit app
+└── evaluation.py  # benchmark runner
+examples/          # 4 planted-leak notebooks + examples/stress/ scripts
+tests/             # pytest suite (uses a temporary cache; never calls a real LLM)
+docs/              # demo script, project plan
 ```
-
----
 
 ## ⚖️ License
 
-REPROVE is distributed under the [Apache License 2.0](LICENSE).
+Apache License 2.0, see [LICENSE](LICENSE).

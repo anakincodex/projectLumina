@@ -386,3 +386,23 @@ tests/test_verifier.py::test_verify_leakage_confirms_example_1 PASSED    [100%]
 ---
 
 
+
+---
+
+## v0.2.0: Review fixes (making the claims true)
+
+An external review found that the demo did not do what the README said. Everything below was fixed and tested.
+
+| Problem found | Fix |
+| :--- | :--- |
+| The Ollama client used a 1.5 s timeout for **every** call, so real Qwen replies (3+ s) always timed out and the run silently fell back. The recorded demo cache was a fallback run. | Separate clients: 3 s for the health check, 300 s for chat (`REPROVE_LLM_TIMEOUT`). Structured outputs (`format=<JSON schema>`), temperature 0, one retry before falling back. The fallback reason is shown in every report. |
+| If the LLM answered `finish` immediately, a leaky notebook was reported CLEAN. | Coverage guard: every core check the agent skipped is run automatically and labelled `coverage` in the trace. Repeated tool calls are not re-run. |
+| The patcher was hard-coded to example 01 (`X`, `StandardScaler`, `SelectKBest(k=10)`), so other code crashed the whole audit. | AST-based patcher that uses the user's own variable names and transformers. Unsupported code becomes `SUSPECTED` with the reason. `verify_leakage` never raises. |
+| Type 2 detection was a keyword search (`concat` flagged clean column joins). | Rows of the real split are hashed at runtime (harness wraps `train_test_split`). Keywords are only a fallback hint. |
+| Type 3 missed "pick the best hyperparameter on the test set" loops. | `trace_test_usage` now detects selection loops and `eval_set=`-style early stopping on the test set. |
+| The cached CONFIRMED result came from **1 seed**, noise 0. A magic `> 0.08` threshold could confirm without a noise test. Missing metrics became `0.0`. | Default 5 seeds (minimum 3), one-sided paired t-test p < 0.05, no magic thresholds. A missing metric means "not verified" with no invented numbers. Metrics are also captured from `sklearn.metrics` calls. |
+| Each leak was reported twice (scaler and selector, vstack and concatenate), and the whole drop was credited to the scaler. | One grouped finding per leak, verified once. Each verification is linked to its evidence ID. |
+| Tests and every live run overwrote the demo cache, and it fell back to filename-only matches (stale results). | The cache is written only with `--record`, keyed by a hash of the exact code. Tests use a temporary cache and never call a real LLM. Replays keep `replayed_from`. |
+| README and demo script quoted numbers that did not match any run, and listed a tool that did not exist. | Rewritten from real 5-seed runs, with an honest limitations section. |
+
+New: `examples/04_test_set_model_selection.ipynb`, `examples/stress/05_*.py`, `examples/stress/06_*.py`, `NOT_CONFIRMED` and `INCONCLUSIVE` verdicts, and benchmark exact-status matching (6/6).

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reprove"
-version = "0.1.0"
-description = "Autonomous open-source agent that audits ML experiments for evaluation leakage."
+version = "0.2.0"
+description = "Open-source agent that audits ML experiments for evaluation leakage and verifies findings with controlled reruns."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -23,13 +23,13 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "nbformat>=5.9.0",
-    "libcst>=1.1.0",
+    "scipy>=1.10.0",
     "pydantic>=2.0.0",
     "typer>=0.9.0",
     "rich>=13.0.0",
     "imagehash>=4.3.1",
     "Pillow>=9.5.0",
-    "ollama>=0.3.0",
+    "ollama>=0.4.0",
     "streamlit>=1.28.0",
 ]
 

@@ -1,4 +1,4 @@
-"""Script to build the 3 benchmark planted-leak notebooks."""
+"""Script to build the 4 benchmark planted-leak notebooks (examples/01-04)."""
 import os
 import nbformat as nbf
 
@@ -130,6 +130,7 @@ nb3.cells = [
         "# Example 03: Cross-Split Sample Duplication Leakage (Type 2)\n\n"
         "**Planted Flaw**: Premature duplication / naive oversampling is applied to the full dataset "
         "before splitting, causing identical feature rows to appear in both train and test splits.\n"
+        "The labels contain realistic noise (`flip_y=0.2`), so memorised duplicates inflate the score clearly.\n"
         "**Ground Truth**: `CONFIRMED` Type 2 Leakage."
     ),
     nbf.v4.new_code_cell(
@@ -147,6 +148,7 @@ nb3.cells = [
         "    n_samples=200,\n"
         "    n_features=20,\n"
         "    n_informative=10,\n"
+        "    flip_y=0.2,\n"
         "    random_state=42\n"
         ")\n"
         "\n"
@@ -178,4 +180,46 @@ nb3.cells = [
 with open("examples/03_subtle_leak_duplicate_split.ipynb", "w", encoding="utf-8") as f:
     nbf.write(nb3, f)
 
-print("Successfully rebuilt all 3 benchmark notebooks in examples/.")
+# -------------------------------------------------------------
+# Notebook 4: Test set used for model selection (Type 3)
+# -------------------------------------------------------------
+nb4 = nbf.v4.new_notebook()
+nb4.cells = [
+    nbf.v4.new_markdown_cell(
+        "# Example 04: Hyperparameter Chosen on the Test Set (Type 3)\n\n"
+        "**Planted Flaw**: a loop trains one model per `max_depth` and keeps the one with the best "
+        "*test* accuracy. The test set is used for model selection, so the reported score is optimistic.\n"
+        "**Ground Truth**: `SUSPECTED` Type 3 leakage (REPROVE has no automatic fix for this type, so it "
+        "reports the evidence and does not claim a measured effect)."
+    ),
+    nbf.v4.new_code_cell(
+        "import numpy as np\n"
+        "from sklearn.datasets import make_classification\n"
+        "from sklearn.model_selection import train_test_split\n"
+        "from sklearn.tree import DecisionTreeClassifier\n"
+        "from sklearn.metrics import accuracy_score"
+    ),
+    nbf.v4.new_code_cell(
+        "X, y = make_classification(n_samples=300, n_features=20, n_informative=4, flip_y=0.2, random_state=42)\n"
+        "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)"
+    ),
+    nbf.v4.new_code_cell(
+        "# FLAGGED LEAK: every candidate is scored on the TEST set and the best one is kept\n"
+        "best_acc, best_depth = 0.0, None\n"
+        "for depth in [1, 2, 3, 4, 5, 6, 8, 10, 15, None]:\n"
+        "    model = DecisionTreeClassifier(max_depth=depth, random_state=42)\n"
+        "    model.fit(X_train, y_train)\n"
+        "    acc = accuracy_score(y_test, model.predict(X_test))\n"
+        "    if acc > best_acc:\n"
+        "        best_acc, best_depth = acc, depth"
+    ),
+    nbf.v4.new_code_cell(
+        "test_acc = best_acc\n"
+        "print(f\"Best max_depth={best_depth}, reported test accuracy={test_acc:.4f}\")"
+    ),
+]
+
+with open("examples/04_test_set_model_selection.ipynb", "w", encoding="utf-8") as f:
+    nbf.write(nb4, f)
+
+print("Successfully rebuilt all 4 benchmark notebooks in examples/.")

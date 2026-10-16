@@ -1,6 +1,6 @@
 """Data models for code spans, pipeline stages, and the Experiment Graph."""
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 
@@ -56,6 +56,27 @@ class ExperimentGraph(BaseModel):
     source_file: str
     raw_code: str
     nodes: List[PipelineNode] = Field(default_factory=list)
+    # Unified-script line -> (notebook cell index, line inside that cell). Empty for .py files.
+    line_to_cell: Dict[int, Tuple[int, int]] = Field(default_factory=dict)
+
+    def span_for_lines(self, start_line: int, end_line: Optional[int] = None) -> CodeSpan:
+        """Build a CodeSpan for any line range of the unified script (keeps notebook cell mapping)."""
+        lines = self.raw_code.splitlines()
+        end_line = end_line or start_line
+        start_line = max(1, start_line)
+        end_line = min(max(start_line, end_line), max(1, len(lines)))
+        cell_index = cell_line = None
+        loc = self.line_to_cell.get(start_line)
+        if loc:
+            cell_index, cell_line = loc
+        return CodeSpan(
+            file_path=self.source_file,
+            start_line=start_line,
+            end_line=end_line,
+            cell_index=cell_index,
+            cell_line=cell_line,
+            code_snippet="\n".join(lines[start_line - 1 : end_line]),
+        )
 
     def get_nodes_by_stage(self, stage: StageType) -> List[PipelineNode]:
         """Return all nodes matching a specific experiment stage."""

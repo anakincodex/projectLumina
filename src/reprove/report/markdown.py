@@ -1,164 +1,196 @@
 """Markdown audit report generator for REPROVE."""
-import os
 import platform
 import sys
 from datetime import datetime, timezone
+from typing import List
+
+import numpy
 import sklearn
 
+from reprove import __version__
 from reprove.agent.schemas import InvestigationReport
-from reprove.verifier.models import FindingStatus
+from reprove.tools.models import EvidenceObject
+from reprove.verifier.models import NOISE_RULE, format_p
+
+VERDICT_TEXT = {
+    "CONFIRMED": (
+        "## 🔴 VERDICT: EVALUATION LEAKAGE CONFIRMED",
+        "A deterministic tool found the leakage pattern AND a controlled rerun with the flaw fixed scored "
+        "significantly worse across seeds, so the reported metric is inflated.",
+    ),
+    "SUSPECTED": (
+        "## 🟡 VERDICT: SUSPECTED LEAKAGE (NOT VERIFIED)",
+        "A deterministic tool found a leakage pattern, but the controlled rerun could not be run for it. "
+        "The reason is given for each finding.",
+    ),
+    "NOT_CONFIRMED": (
+        "## 🔵 VERDICT: LEAKAGE PATTERN PRESENT, NO MEASURABLE INFLATION",
+        "A leakage pattern exists in the code, but fixing it did not change the score beyond seed noise. "
+        "It is still worth fixing.",
+    ),
+    "INCONCLUSIVE": (
+        "## ⚪ VERDICT: INCONCLUSIVE",
+        "Some checks could not run on this code (see below), and no leakage was found by the checks that did run.",
+    ),
+    "CLEAN": (
+        "## 🟢 VERDICT: CLEAN (NO LEAK DETECTED)",
+        "No leakage was detected by the fit-before-split, split-overlap and test-usage checks.",
+    ),
+}
+
+
+def location(ev: EvidenceObject) -> str:
+    span = ev.offending_span or ev.context_span
+    if not span:
+        return "n/a"
+    lines = f"script lines {span.start_line}-{span.end_line}"
+    if span.cell_index is not None:
+        return f"notebook cell [{span.cell_index}], line {span.cell_line} ({lines})"
+    return lines
+
+
+def mode_description(report: InvestigationReport) -> str:
+    mode = report.effective_mode
+    model = f" (model `{report.model_name}`)" if report.model_name else ""
+    if mode == "LLM_OLLAMA":
+        text = f"open-weight LLM agent via Ollama{model}"
+    elif mode == "FALLBACK_DETERMINISTIC":
+        text = "deterministic fallback plan (no LLM decisions)"
+    else:
+        text = mode
+    if report.execution_mode == "REPLAY_CACHE":
+        when = f", recorded {report.recorded_at}" if report.recorded_at else ""
+        text = f"replay of a recorded run - {text}{when}"
+    return text
+
+
+def _finding_section(report: InvestigationReport, ev: EvidenceObject, idx: int, label: str) -> List[str]:
+    out = []
+    vr = report.verification_for(ev.evidence_id)
+    out.append(f"### Finding {idx}: {ev.metrics.get('leak_type', 'LEAKAGE')} - `{label}`")
+    out.append(f"- **Evidence ID**: `{ev.evidence_id}` (tool `{ev.tool_name}`)")
+    out.append(f"- **Code location**: {location(ev)}")
+    if ev.offending_span:
+        out.append(f"\n```python\n{ev.offending_span.code_snippet}\n```\n")
+    out.append(f"**Tool evidence**: {ev.summary}\n")
+
+    if vr and vr.verification_ran:
+        arrow = "higher is better" if vr.higher_is_better else "lower is better"
+        out.append(f"#### Controlled rerun (`{vr.primary_metric_name}`, {arrow})")
+        out.append("| Seed | Original (as written) | Corrected | Difference |")
+        out.append("| :---: | :---: | :---: | :---: |")
+        for sr in vr.seed_runs:
+            out.append(f"| `{sr.seed}` | `{sr.original_metric:.4f}` | `{sr.patched_metric:.4f}` | `{sr.delta:+.4f}` |")
+        out.append(
+            f"| **Mean ± std** | **`{vr.original_mean:.4f} ± {vr.original_std:.4f}`** | "
+            f"**`{vr.patched_mean:.4f} ± {vr.patched_std:.4f}`** | **`{vr.mean_delta:+.4f}`** |\n"
+        )
+        p = format_p(vr.p_value)
+        out.append(f"- **Std of paired differences**: `{vr.seed_noise_std:.4f}` (standard error `{vr.standard_error:.4f}`)")
+        out.append(f"- **One-sided paired t-test p-value**: `{p}`")
+        out.append(f"- **Decision rule**: {NOISE_RULE}")
+    if vr:
+        out.append(f"- **Verification verdict**: {vr.reason}\n")
+    if vr and vr.diff:
+        out.append("#### Suggested correction (diff generated from your code)")
+        out.append("```diff")
+        out.append(vr.diff.strip())
+        out.append("```\n")
+    if ev.suggested_fix:
+        out.append(f"**How to fix**: {ev.suggested_fix}\n")
+    return out
 
 
 def render_markdown_report(report: InvestigationReport) -> str:
-    """
-    Renders an InvestigationReport into a GitHub-Flavored Markdown audit document.
-    Strict Invariant: Every number comes from real executed outputs.
-    """
-    lines = []
-
-    # Title & Header
-    lines.append(f"# 🔬 REPROVE Audit Report")
+    """Render an InvestigationReport as GitHub-flavoured Markdown. Every number comes from executed runs."""
+    lines: List[str] = []
+    lines.append("# 🔬 REPROVE Audit Report")
     lines.append(f"**Target**: `{report.file_path}`  ")
-    lines.append(f"**Audit Timestamp**: `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
-    lines.append(f"**Execution Mode**: `{report.execution_mode}`  \n")
+    lines.append(f"**Report generated**: `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}`  ")
+    lines.append(f"**Execution mode**: `{report.execution_mode}` - {mode_description(report)}  ")
+    if report.fallback_reason:
+        lines.append(f"**Why the fallback plan was used**: {report.fallback_reason}  ")
+    if report.seeds:
+        lines.append(f"**Seeds**: `{', '.join(str(s) for s in report.seeds)}`  ")
+    lines.append("")
 
-    # Executive Verdict Badge
-    if report.has_confirmed_leaks:
-        badge = "## 🔴 VERDICT: EVALUATION LEAKAGE CONFIRMED"
-        verdict_desc = (
-            "Empirical evidence proves evaluation leakage in this pipeline. "
-            "Rerunning the experiment with the flaw fixed resulted in a statistically significant "
-            "drop in performance, confirming that evaluation metrics were artificially inflated."
-        )
-    elif len(report.suspected_evidence) > 0:
-        badge = "## 🟡 VERDICT: SUSPECTED LEAKAGE DETECTED"
-        verdict_desc = (
-            "Structural patterns indicate potential evaluation leakage. However, controlled rerun "
-            "verification could not be automatically confirmed."
-        )
-    else:
-        badge = "## 🟢 VERDICT: CLEAN AUDIT (NO LEAK DETECTED)"
-        verdict_desc = (
-            "No evaluation leakage was detected across dataset splitting, preprocessing, "
-            "model selection, or evaluation stages."
-        )
-
+    badge, desc = VERDICT_TEXT[report.verdict]
     lines.append(badge)
-    lines.append(f"{verdict_desc}\n")
+    lines.append(f"{desc}\n")
 
-    # Summary Table
+    reruns = sum(1 for v in report.verification_results if v.verification_ran)
     lines.append("### Audit Summary")
-    lines.append("| Metric | Value |")
+    lines.append("| Item | Count |")
     lines.append("| :--- | :--- |")
     lines.append(f"| **Confirmed Leakage Findings** | **{len(report.confirmed_evidence)}** |")
-    lines.append(f"| **Suspected Leakage Findings** | {len(report.suspected_evidence)} |")
-    lines.append(f"| **Clean / Passed Checks** | {len(report.clean_checks)} |")
-    lines.append(f"| **Investigation Steps Executed** | {len(report.steps)} |")
-    lines.append(f"| **Controlled Reruns Executed** | {len(report.verification_results)} |\n")
+    lines.append(f"| Suspected (not verified) | {len(report.suspected_evidence)} |")
+    lines.append(f"| Pattern present, no measurable inflation | {len(report.not_confirmed_evidence)} |")
+    lines.append(f"| Clean checks | {len(report.clean_checks)} |")
+    lines.append(f"| Inconclusive checks | {len(report.inconclusive_checks)} |")
+    lines.append(f"| Investigation steps | {len(report.steps)} |")
+    lines.append(f"| Controlled reruns executed | {reruns} |\n")
 
-    # 1. Confirmed Findings
+    idx = 0
     if report.confirmed_evidence:
         lines.append("---")
         lines.append("## 🚨 Confirmed Leakage Findings\n")
-
-        for idx, ev in enumerate(report.confirmed_evidence, 1):
-            leak_type = ev.metrics.get("leak_type", "EVALUATION_LEAKAGE")
-            lines.append(f"### Finding {idx}: {leak_type}")
-            lines.append(f"- **Status**: `CONFIRMED`")
-            lines.append(f"- **Evidence ID**: `{ev.evidence_id}`")
-            lines.append(f"- **Evidence Tool**: `{ev.tool_name}` (Confidence: {ev.confidence * 100:.0f}%)")
-
-            if ev.offending_span:
-                span_desc = f"Line {ev.offending_span.start_line} to {ev.offending_span.end_line}"
-                if ev.offending_span.cell_index is not None:
-                    span_desc = f"Notebook Cell [{ev.offending_span.cell_index}], Line {ev.offending_span.cell_line} ({span_desc})"
-                lines.append(f"- **Offending Code Location**: `{span_desc}`")
-                lines.append(f"\n```python\n{ev.offending_span.code_snippet}\n```\n")
-
-            lines.append(f"**Finding Summary**:  \n{ev.summary}\n")
-
-            # Look up matching verification result
-            matching_vr = next(
-                (v for v in report.verification_results if v.status == FindingStatus.CONFIRMED),
-                None,
-            )
-
-            if matching_vr:
-                lines.append("#### Controlled Rerun Verification Results")
-                lines.append(f"Primary Metric: **`{matching_vr.primary_metric_name}`**\n")
-
-                lines.append("| Random Seed | Original Metric (Leaked) | Patched Metric (Clean) | Measured Delta (Δ) |")
-                lines.append("| :---: | :---: | :---: | :---: |")
-                for sr in matching_vr.seed_runs:
-                    lines.append(f"| Seed `{sr.seed}` | `{sr.original_metric:.4f}` | `{sr.patched_metric:.4f}` | **`{sr.delta:+.4f}`** |")
-
-                lines.append(
-                    f"| **Mean ± Std** | **`{matching_vr.original_mean:.4f} ± {matching_vr.original_std:.4f}`** | "
-                    f"**`{matching_vr.patched_mean:.4f} ± {matching_vr.patched_std:.4f}`** | "
-                    f"**`{matching_vr.mean_delta:+.4f}`** |\n"
-                )
-
-                lines.append(f"- **Seed Noise Standard Deviation**: `σ = {matching_vr.seed_noise_std:.4f}`")
-                lines.append(f"- **Statistically Significant**: `{'YES (|Δ| > 2σ)' if matching_vr.is_significant else 'NO'}`")
-                lines.append(f"- **Empirical Verdict**: {matching_vr.reason}\n")
-
-                if matching_vr.diff:
-                    lines.append("#### Suggested Correction (Diff)")
-                    lines.append("```diff")
-                    lines.append(matching_vr.diff.strip())
-                    lines.append("```\n")
-
-            elif ev.suggested_fix:
-                lines.append(f"**Suggested Remediation**: {ev.suggested_fix}\n")
-
-    # 2. Suspected Findings
+        for ev in report.confirmed_evidence:
+            idx += 1
+            lines.extend(_finding_section(report, ev, idx, "CONFIRMED"))
     if report.suspected_evidence:
         lines.append("---")
-        lines.append("## ⚠️ Suspected Leakage Findings\n")
-        for idx, ev in enumerate(report.suspected_evidence, 1):
-            leak_type = ev.metrics.get("leak_type", "SUSPECTED_LEAKAGE")
-            lines.append(f"### Suspected Finding {idx}: {leak_type}")
-            lines.append(f"- **Status**: `SUSPECTED` (Deterministic detection; rerun not verified)")
-            lines.append(f"- **Evidence ID**: `{ev.evidence_id}`")
-            lines.append(f"- **Tool**: `{ev.tool_name}`")
-            if ev.offending_span:
-                lines.append(f"- **Location**: Line {ev.offending_span.start_line} - {ev.offending_span.end_line}")
-                lines.append(f"\n```python\n{ev.offending_span.code_snippet}\n```\n")
-            lines.append(f"**Analysis**: {ev.summary}")
-            if ev.suggested_fix:
-                lines.append(f"**Remediation**: {ev.suggested_fix}\n")
+        lines.append("## ⚠️ Suspected Leakage Findings (not verified)\n")
+        for ev in report.suspected_evidence:
+            idx += 1
+            lines.extend(_finding_section(report, ev, idx, "SUSPECTED"))
+    if report.not_confirmed_evidence:
+        lines.append("---")
+        lines.append("## 🔵 Leakage Patterns Without Measurable Inflation\n")
+        for ev in report.not_confirmed_evidence:
+            idx += 1
+            lines.extend(_finding_section(report, ev, idx, "NOT_CONFIRMED"))
 
-    # 3. Clean Checks
     if report.clean_checks:
         lines.append("---")
-        lines.append("## ✅ Passed Checks (Verified Clean)\n")
+        lines.append("## ✅ Passed Checks\n")
         for ck in report.clean_checks:
             lines.append(f"- **`{ck.tool_name}`**: {ck.summary}")
         lines.append("")
-
-    # 4. Agent Trace
-    if report.steps:
-        lines.append("---")
-        lines.append("## 🕵️ Autonomous Investigation Trace\n")
-        lines.append("| Step | Tool Chosen | Observation | Evidence Anchor |")
-        lines.append("| :---: | :--- | :--- | :--- |")
-        for st in report.steps:
-            ev_anchor = f"`{st.evidence_id}`" if st.evidence_id else "—"
-            obs_brief = st.observation.splitlines()[0] if st.observation else "OK"
-            if len(obs_brief) > 80:
-                obs_brief = obs_brief[:77] + "..."
-            lines.append(f"| {st.step_number} | `{st.tool_name}` | {obs_brief} | {ev_anchor} |")
+    if report.inconclusive_checks:
+        lines.append("## ⚪ Inconclusive Checks\n")
+        for ck in report.inconclusive_checks:
+            lines.append(f"- **`{ck.tool_name}`**: {ck.summary}")
         lines.append("")
 
-    # 5. Reproducibility Instructions
-    lines.append("---")
-    lines.append("## 🔬 Reproducibility & Environment")
-    lines.append("To independently reproduce this exact audit result, execute:")
-    lines.append("```bash")
-    lines.append(f"reprove audit {report.file_path} --replay")
-    lines.append("```")
-    lines.append(f"- **Python Version**: `{platform.python_version()} ({sys.platform})`")
-    lines.append(f"- **scikit-learn Version**: `{sklearn.__version__}`")
-    lines.append("- **Verification Guarantee**: Every metric above was measured through sandboxed execution; zero claims were fabricated by LLM generation.")
+    if report.steps:
+        lines.append("---")
+        lines.append("## 🕵️ Investigation Trace\n")
+        lines.append("`agent` = chosen by the LLM, `coverage` = run automatically because the agent skipped it, "
+                     "`fallback` = deterministic plan.\n")
+        lines.append("| Step | Origin | Tool | Result | Reasoning | Evidence |")
+        lines.append("| :---: | :--- | :--- | :--- | :--- | :--- |")
+        for st in report.steps:
+            thought = st.thought.replace("|", "/").replace("\n", " ")
+            if len(thought) > 110:
+                thought = thought[:107] + "..."
+            anchor = f"`{st.evidence_id}`" if st.evidence_id else "-"
+            lines.append(f"| {st.step_number} | {st.origin} | `{st.tool_name}` | {st.result or '-'} | {thought} | {anchor} |")
+        lines.append("")
 
+    seeds = ",".join(str(s) for s in report.seeds) if report.seeds else "0,1,2,3,4"
+    model = report.model_name or "qwen2.5-coder:7b"
+    lines.append("---")
+    lines.append("## 🔁 Reproducibility")
+    lines.append("Re-run the full audit (tools and controlled reruns execute again):")
+    lines.append("```bash")
+    lines.append(f"reprove audit {report.file_path} --model {model} --seeds {seeds}")
+    lines.append("```")
+    lines.append("`--replay` only re-displays a previously recorded run; it does not re-execute anything.\n")
+    lines.append(f"- **REPROVE**: `{__version__}`")
+    lines.append(f"- **Python**: `{platform.python_version()} ({sys.platform})`")
+    lines.append(f"- **scikit-learn**: `{sklearn.__version__}` | **numpy**: `{numpy.__version__}`")
+    lines.append(
+        "- Every metric above was measured by running the code in a separate Python process with a timeout "
+        "(process isolation, not a security sandbox). No number in this report was generated by the LLM."
+    )
     return "\n".join(lines)

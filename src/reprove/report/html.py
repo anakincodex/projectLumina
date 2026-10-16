@@ -1,191 +1,163 @@
-"""HTML audit report renderer for REPROVE."""
+"""Self-contained (offline) HTML audit report renderer for REPROVE."""
 import html
 import os
 import platform
-import sys
-from datetime import datetime, timezone
+from typing import List
+
 import sklearn
 
+from reprove import __version__
 from reprove.agent.schemas import InvestigationReport
-from reprove.verifier.models import FindingStatus
+from reprove.report.markdown import VERDICT_TEXT, location, mode_description
+from reprove.tools.models import EvidenceObject
+from reprove.verifier.models import NOISE_RULE, format_p
+
+BADGE_COLORS = {
+    "CONFIRMED": "#da3633",
+    "SUSPECTED": "#d29922",
+    "NOT_CONFIRMED": "#1f6feb",
+    "INCONCLUSIVE": "#6e7681",
+    "CLEAN": "#238636",
+}
+TAG_CLASS = {"CONFIRMED": "tag-red", "SUSPECTED": "tag-yellow", "NOT_CONFIRMED": "tag-blue"}
+
+e = html.escape
+
+
+def _finding_card(report: InvestigationReport, ev: EvidenceObject, idx: int, label: str) -> str:
+    vr = report.verification_for(ev.evidence_id)
+    code = f"<pre><code>{e(ev.offending_span.code_snippet)}</code></pre>" if ev.offending_span else ""
+    rerun = ""
+    if vr and vr.verification_ran:
+        rows = "".join(
+            f"<tr><td>{sr.seed}</td><td>{sr.original_metric:.4f}</td><td>{sr.patched_metric:.4f}</td>"
+            f"<td><strong>{sr.delta:+.4f}</strong></td></tr>"
+            for sr in vr.seed_runs
+        )
+        p = format_p(vr.p_value)
+        rerun = f"""
+        <h4>Controlled rerun - metric <code>{e(vr.primary_metric_name)}</code></h4>
+        <table>
+          <thead><tr><th>Seed</th><th>Original (as written)</th><th>Corrected</th><th>Difference</th></tr></thead>
+          <tbody>{rows}
+            <tr class="total"><td>Mean ± std</td><td>{vr.original_mean:.4f} ± {vr.original_std:.4f}</td>
+            <td>{vr.patched_mean:.4f} ± {vr.patched_std:.4f}</td><td>{vr.mean_delta:+.4f}</td></tr>
+          </tbody>
+        </table>
+        <p><strong>Std of paired differences:</strong> {vr.seed_noise_std:.4f} |
+           <strong>One-sided paired t-test p:</strong> {p}</p>
+        <p class="muted">{e(NOISE_RULE)}</p>"""
+    reason = f"<p><em>{e(vr.reason)}</em></p>" if vr else ""
+    diff = (
+        f'<details><summary>Suggested correction (diff)</summary><pre class="diff"><code>{e(vr.diff)}</code></pre></details>'
+        if vr and vr.diff else ""
+    )
+    fix = f"<p><strong>How to fix:</strong> {e(ev.suggested_fix)}</p>" if ev.suggested_fix else ""
+    return f"""
+    <div class="card">
+      <h3>Finding {idx}: {e(str(ev.metrics.get('leak_type', 'LEAKAGE')))}
+        <span class="tag {TAG_CLASS.get(label, '')}">{label}</span></h3>
+      <p><strong>Evidence:</strong> <code>{e(ev.evidence_id)}</code> from <code>{e(ev.tool_name)}</code> |
+         <strong>Location:</strong> {e(location(ev))}</p>
+      <p>{e(ev.summary)}</p>
+      {code}{rerun}{reason}{diff}{fix}
+    </div>"""
 
 
 def render_html_report(report: InvestigationReport) -> str:
-    """Renders a self-contained, offline-compatible HTML audit report."""
-    is_confirmed = report.has_confirmed_leaks
-    is_suspected = len(report.suspected_evidence) > 0 and not is_confirmed
+    verdict = report.verdict
+    title, desc = VERDICT_TEXT[verdict]
+    title = title.lstrip("# ").strip()
 
-    badge_color = "#da3633" if is_confirmed else ("#d29922" if is_suspected else "#238636")
-    badge_title = "EVALUATION LEAKAGE CONFIRMED" if is_confirmed else ("SUSPECTED LEAKAGE" if is_suspected else "CLEAN AUDIT")
+    cards: List[str] = []
+    idx = 0
+    for label, items in (
+        ("CONFIRMED", report.confirmed_evidence),
+        ("SUSPECTED", report.suspected_evidence),
+        ("NOT_CONFIRMED", report.not_confirmed_evidence),
+    ):
+        for ev in items:
+            idx += 1
+            cards.append(_finding_card(report, ev, idx, label))
 
-    confirmed_html = ""
-    for idx, ev in enumerate(report.confirmed_evidence, 1):
-        matching_vr = next(
-            (v for v in report.verification_results if v.status == FindingStatus.CONFIRMED),
-            None,
-        )
-
-        vr_html = ""
-        if matching_vr:
-            seed_rows = "".join(
-                f"<tr><td>Seed {sr.seed}</td><td>{sr.original_metric:.4f}</td><td>{sr.patched_metric:.4f}</td><td style='color:#da3633; font-weight:bold;'>{sr.delta:+.4f}</td></tr>"
-                for sr in matching_vr.seed_runs
-            )
-            vr_html = f"""
-            <div class="card" style="margin-top:15px; border-left: 4px solid #da3633;">
-                <h4>Controlled Rerun Results (Metric: <code>{matching_vr.primary_metric_name}</code>)</h4>
-                <table>
-                    <thead>
-                        <tr><th>Seed</th><th>Original (Leaked)</th><th>Patched (Clean)</th><th>Delta (Δ)</th></tr>
-                    </thead>
-                    <tbody>
-                        {seed_rows}
-                        <tr style="font-weight:bold; background:#21262d;">
-                            <td>Mean ± Std</td>
-                            <td>{matching_vr.original_mean:.4f} ± {matching_vr.original_std:.4f}</td>
-                            <td>{matching_vr.patched_mean:.4f} ± {matching_vr.patched_std:.4f}</td>
-                            <td style="color:#da3633;">{matching_vr.mean_delta:+.4f}</td>
-                        </tr>
-                    </tbody>
-                </table>
-                <p style="margin-top:8px;"><strong>Seed Noise:</strong> σ = {matching_vr.seed_noise_std:.4f} | <strong>Exceeds 2σ:</strong> {'YES' if matching_vr.is_significant else 'NO'}</p>
-                <p><em>{html.escape(matching_vr.reason)}</em></p>
-                {f'<details><summary>View Suggested Fix Diff</summary><pre class="diff"><code>{html.escape(matching_vr.diff)}</code></pre></details>' if matching_vr.diff else ''}
-            </div>
-            """
-
-        offending_code = f"<pre><code>{html.escape(ev.offending_span.code_snippet)}</code></pre>" if ev.offending_span else ""
-        confirmed_html += f"""
-        <div class="card finding-card">
-            <h3>Finding {idx}: {html.escape(ev.metrics.get('leak_type', 'CONFIRMED_LEAK'))}</h3>
-            <p><strong>Status:</strong> <span class="tag tag-red">CONFIRMED</span> | <strong>Tool:</strong> <code>{html.escape(ev.tool_name)}</code> | <strong>Evidence ID:</strong> <code>{html.escape(ev.evidence_id)}</code></p>
-            <p>{html.escape(ev.summary)}</p>
-            {offending_code}
-            {vr_html}
-        </div>
-        """
+    checks = "".join(
+        f"<li><code>{e(c.tool_name)}</code>: {e(c.summary)}</li>" for c in report.clean_checks
+    ) + "".join(
+        f"<li><code>{e(c.tool_name)}</code> (inconclusive): {e(c.summary)}</li>" for c in report.inconclusive_checks
+    )
+    steps = "".join(
+        f"<tr><td>{s.step_number}</td><td>{e(s.origin)}</td><td><code>{e(s.tool_name)}</code></td>"
+        f"<td>{e(s.result or '-')}</td><td>{e(s.thought[:160])}</td></tr>"
+        for s in report.steps
+    )
+    fallback = f"<p><strong>Fallback reason:</strong> {e(report.fallback_reason)}</p>" if report.fallback_reason else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>REPROVE Audit Report: {html.escape(os.path.basename(report.file_path))}</title>
-    <style>
-        :root {{
-            --bg: #0d1117;
-            --card-bg: #161b22;
-            --border: #30363d;
-            --text: #c9d1d9;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-        }}
-        body {{
-            background: var(--bg);
-            color: var(--text);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 30px 20px;
-        }}
-        .container {{
-            max-width: 900px;
-            margin: 0 auto;
-        }}
-        h1, h2, h3, h4 {{ color: #ffffff; }}
-        .header {{
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 20px;
-            margin-bottom: 25px;
-        }}
-        .badge {{
-            display: inline-block;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: bold;
-            font-size: 1.1rem;
-            background: {badge_color};
-            color: #ffffff;
-            margin-bottom: 15px;
-        }}
-        .card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }}
-        th, td {{
-            text-align: left;
-            padding: 10px;
-            border-bottom: 1px solid var(--border);
-        }}
-        th {{ background: #21262d; color: #f0f6fc; }}
-        code {{
-            background: #21262d;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: Consolas, monospace;
-            font-size: 0.9em;
-        }}
-        pre {{
-            background: #090d13;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 12px;
-            overflow-x: auto;
-        }}
-        pre.diff {{ color: #7ee787; }}
-        details {{ margin-top: 10px; cursor: pointer; }}
-        summary {{ font-weight: 600; color: var(--accent); }}
-        .tag {{
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }}
-        .tag-red {{ background: #da3633; color: white; }}
-        .tag-green {{ background: #238636; color: white; }}
-        .footer {{
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border);
-            color: var(--text-muted);
-            font-size: 0.85em;
-        }}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REPROVE Audit Report: {e(os.path.basename(report.file_path))}</title>
+<style>
+  :root {{ --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#c9d1d9; --muted:#8b949e; --accent:#58a6ff; }}
+  body {{ background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+         line-height:1.6; margin:0; padding:30px 16px; }}
+  .container {{ max-width:920px; margin:0 auto; }}
+  h1,h2,h3,h4 {{ color:#fff; }}
+  .badge {{ display:inline-block; padding:8px 16px; border-radius:6px; font-weight:bold; background:{BADGE_COLORS[verdict]}; color:#fff; }}
+  .card {{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:18px; margin-bottom:18px; overflow-x:auto; }}
+  table {{ width:100%; border-collapse:collapse; margin-top:8px; }}
+  th,td {{ text-align:left; padding:8px; border-bottom:1px solid var(--border); vertical-align:top; }}
+  th {{ background:#21262d; color:#f0f6fc; }}
+  tr.total td {{ font-weight:bold; background:#21262d; }}
+  code {{ background:#21262d; padding:2px 6px; border-radius:4px; font-family:Consolas,monospace; font-size:.9em; }}
+  pre {{ background:#090d13; border:1px solid var(--border); border-radius:6px; padding:12px; overflow-x:auto; }}
+  pre code {{ background:none; padding:0; }}
+  pre.diff {{ color:#7ee787; }}
+  summary {{ cursor:pointer; font-weight:600; color:var(--accent); }}
+  .tag {{ display:inline-block; padding:2px 8px; border-radius:4px; font-size:.75em; color:#fff; vertical-align:middle; }}
+  .tag-red {{ background:#da3633; }} .tag-yellow {{ background:#9e6a03; }} .tag-blue {{ background:#1f6feb; }}
+  .muted {{ color:var(--muted); font-size:.9em; }}
+  .footer {{ margin-top:32px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:.85em; }}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🔬 REPROVE Audit Report</h1>
-            <p><strong>Target:</strong> <code>{html.escape(report.file_path)}</code> | <strong>Execution Mode:</strong> <code>{report.execution_mode}</code></p>
-            <div class="badge">{badge_title}</div>
-        </div>
+<div class="container">
+  <h1>🔬 REPROVE Audit Report</h1>
+  <p><strong>Target:</strong> <code>{e(report.file_path)}</code></p>
+  <p><strong>Execution mode:</strong> <code>{e(report.execution_mode)}</code> - {e(mode_description(report))}</p>
+  {fallback}
+  <p><strong>Seeds:</strong> {e(', '.join(str(s) for s in report.seeds))}</p>
+  <div class="badge">{e(title)}</div>
+  <p>{e(desc)}</p>
 
-        <div class="card">
-            <h3>Audit Summary</h3>
-            <table>
-                <tr><td>Confirmed Findings</td><td><strong>{len(report.confirmed_evidence)}</strong></td></tr>
-                <tr><td>Suspected Findings</td><td>{len(report.suspected_evidence)}</td></tr>
-                <tr><td>Passed / Clean Checks</td><td>{len(report.clean_checks)}</td></tr>
-                <tr><td>Investigation Steps</td><td>{len(report.steps)}</td></tr>
-            </table>
-        </div>
+  <div class="card">
+    <h3>Audit summary</h3>
+    <table>
+      <tr><td>Confirmed findings</td><td><strong>{len(report.confirmed_evidence)}</strong></td></tr>
+      <tr><td>Suspected (not verified)</td><td>{len(report.suspected_evidence)}</td></tr>
+      <tr><td>Pattern present, no measurable inflation</td><td>{len(report.not_confirmed_evidence)}</td></tr>
+      <tr><td>Clean / inconclusive checks</td><td>{len(report.clean_checks)} / {len(report.inconclusive_checks)}</td></tr>
+      <tr><td>Investigation steps</td><td>{len(report.steps)}</td></tr>
+    </table>
+  </div>
 
-        {confirmed_html}
+  {''.join(cards)}
 
-        <div class="footer">
-            <p>Generated by REPROVE | Python {platform.python_version()} | scikit-learn {sklearn.__version__}</p>
-            <p>Non-negotiable guarantee: Every metric and finding was verified by empirical execution.</p>
-        </div>
-    </div>
+  <div class="card"><h3>Checks</h3><ul>{checks or '<li>None</li>'}</ul></div>
+
+  <div class="card">
+    <h3>Investigation trace</h3>
+    <p class="muted">agent = chosen by the LLM, coverage = run automatically because the agent skipped it, fallback = deterministic plan.</p>
+    <table><thead><tr><th>#</th><th>Origin</th><th>Tool</th><th>Result</th><th>Reasoning</th></tr></thead>
+    <tbody>{steps}</tbody></table>
+  </div>
+
+  <div class="footer">
+    <p>REPROVE {e(__version__)} | Python {platform.python_version()} | scikit-learn {sklearn.__version__}</p>
+    <p>Every metric was measured by executing the code in a separate process; no number was generated by the LLM.</p>
+  </div>
+</div>
 </body>
 </html>
 """

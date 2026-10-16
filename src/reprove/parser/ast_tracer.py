@@ -362,4 +362,5 @@ def build_experiment_graph(
         source_file=file_path,
         raw_code=source_code,
         nodes=visitor.nodes,
+        line_to_cell=dict(notebook_mapping.line_to_cell) if notebook_mapping else {},
     )

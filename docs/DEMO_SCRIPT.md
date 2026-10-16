@@ -1,107 +1,109 @@
-# 🎤 REPROVE: 3-Minute Live Hackathon Demo Script
+# 🎤 REPROVE: 3-Minute Demo Script
 
-> **Hackathon Track**: Best Open-Source AI Project  
-> **Core Principle**: *The LLM proposes, deterministic tools verify.* Zero fabricated numbers.  
-> **Presenter Roles**: Team of 3-4 (Speaker / Live Driver / Tech Lead / Slide & UI Presenter).
-
----
-
-## ⏱️ Timeline Overview
-
-| Time | Section | Key Visual / Action | Speaker Goal |
-| :---: | :--- | :--- | :--- |
-| **0:00 - 0:40** | The Silent Crisis in ML | Slide: Kaggle & Academic Papers with Leaks | Hook judges with the billion-dollar evaluation leak problem |
-| **0:40 - 1:10** | REPROVE Core Principle | Architecture Diagram | Explain why open-weight LLMs + deterministic verification beat naive chat prompts |
-| **1:10 - 2:00** | Live Demo (Terminal & UI) | `reprove audit` & Streamlit Dashboard | Show live audit on textbook Hastie-Tibshirani benchmark ($\Delta = -0.2026$) |
-| **2:00 - 2:30** | Counterfactual Proof & Control | Code Diff & Clean Benchmark Rerun | Prove empirical rerun drop and zero false-positive negative control |
-| **2:30 - 3:00** | Benchmark Matrix & Conclusion | `reprove benchmark` (100% Precision/Recall) | Close with open-source impact, reproducibility, and Apache-2.0 license |
+> **Track**: Best Open-Source AI Project
+> **Core principle**: *The LLM proposes, tools verify.* Every number on screen comes from an executed run.
 
 ---
 
-## 🎬 Section-by-Section Script & Commands
+## ✅ Before you go on stage (do this 30+ minutes early)
 
-### 1. The Hook: The Silent Crisis in ML (0:00 – 0:40)
-**Speaker**:  
-> *"Judges, imagine training a medical diagnosis model that boasts a 95% test accuracy. You deploy it to a hospital, and patients start getting misdiagnosed. What went wrong?*  
-> *It wasn’t the model architecture. It was **evaluation leakage**—a subtle bug where test set statistics leaked into feature selection before the train-test split.*  
-> *Today, data scientists rely on two flawed extremes: static regex linters that spit out dozens of false alarms, or cloud LLMs that hallucinate line numbers and invent fake numbers. Neither can tell you: **does this bug actually break my model?**"*
-
----
-
-### 2. Enter REPROVE (0:40 – 1:10)
-**Speaker**:  
-> *"We built **REPROVE**—an open-source autonomous agent that audits ML experiments and **empirically proves** whether evaluation leakage occurred.*  
-> *Our core architectural principle is non-negotiable: **The LLM proposes, deterministic tools verify.***  
-> *An open-weight model—Qwen2.5-Coder running locally via Ollama—investigates the code graph and formulates hypotheses. But the model is never allowed to confirm a finding. Confirmation requires a deterministic tool check and a controlled, multi-seed counterfactual rerun."*
-
----
-
-### 3. Live Demonstration: Terminal Audit (1:10 – 1:40)
-**Driver Action**:  
-In the terminal, run:
-```bash
-reprove audit examples/01_clear_leak_scaler_before_split.ipynb --replay
-```
-
-**Speaker**:  
-> *"Watch REPROVE audit a textbook benchmark from Hastie & Tibshirani’s Elements of Statistical Learning.*  
-> *Look at the terminal output:*  
-> *1. **Investigation Trajectory**: The open-weight agent inspected the experiment graph, identified a suspicious `SelectKBest` and `StandardScaler` call, and invoked our deterministic `check_fit_before_split` tool.*  
-> *2. **Deterministic Evidence**: The tool traced the AST dataflow and proved that features were fitted on all 200 samples before splitting.*  
-> *3. **Controlled Counterfactual Verification**: REPROVE automatically patched the AST to isolate fitting to the training split, and reran the experiment across random seeds.*  
-> *Look at the numbers on screen: The original reported score was **0.7410**. The clean patched score dropped to **0.5384**—an empirical inflation of **Δ = -0.2026** against a random noise margin of ±0.07. That is empirical mathematical proof of leakage."*
+1. `ollama serve` is running and `ollama pull qwen2.5-coder:7b` is done. Warm it up: `ollama run qwen2.5-coder:7b "hi"`.
+2. Record **real agent runs** for the demo notebooks (each takes about a minute):
+   ```bash
+   reprove audit examples/01_clear_leak_scaler_before_split.ipynb --record --no-fail-on-leak
+   reprove audit examples/02_clean_pipeline_no_leak.ipynb --record
+   reprove audit examples/04_test_set_model_selection.ipynb --record
+   ```
+   Check that each output says `Mode: LLM_OLLAMA`. If it says `FALLBACK_DETERMINISTIC`, read the
+   "Fallback reason" line, fix it (usually Ollama not running or model not pulled), and record again.
+3. **Write down the numbers from YOUR recorded run** (original mean, corrected mean, mean difference, p-value)
+   and use them in the script below. The values in brackets are from our test machine and may differ slightly.
+4. Open `reprove ui` in a browser tab, with "Replay recorded run" ticked.
+5. Have the backup screen recording ready.
 
 ---
 
-### 4. Interactive UI & Zero False-Positive Control (1:40 – 2:20)
-**Driver Action**:  
-Switch to the browser showing the Streamlit interface (or run `reprove ui`):
-```bash
-reprove ui
-```
-- Click into **01 - Type 1: Clear Preprocessing Leak**.
-- Show the **🚨 CONFIRMED LEAK** banner.
-- Click the **🛠️ Counterfactual Patch** tab to show the syntax-highlighted AST diff.
-- Switch the dropdown to **02 - Negative Control: Clean Encapsulated Pipeline** and click **Run Empirical Audit**.
+## ⏱️ Timeline
 
-**Speaker**:  
-> *"In our Streamlit live dashboard, you can see the complete investigation audit trail.*  
-> *Under the Counterfactual Patch tab, REPROVE generates the exact unified diff that engineers can merge to fix their code.*  
-> *Now watch what happens when we audit a properly encapsulated `Pipeline` in Benchmark 02.*  
-> *REPROVE runs all deterministic checks, finds zero leakage, and issues an immediate **✅ CLEAN EXPERIMENT PIPELINE** verdict.*  
-> *No false alarms. No noisy warnings. 100% specificity."*
+| Time | Section | On screen |
+| :---: | :--- | :--- |
+| 0:00-0:30 | The problem | Notebook 01 claiming AUC ≈ 0.77 |
+| 0:30-1:00 | How REPROVE works | Architecture diagram (README) |
+| 1:00-2:00 | Live audit of notebook 01 | Terminal or Streamlit, replay of the recorded Qwen run |
+| 2:00-2:30 | No false alarms + honesty | Notebook 02 (clean), notebook 04 (SUSPECTED) |
+| 2:30-3:00 | Close | Benchmark table, open-source stack |
 
 ---
 
-### 5. Benchmark Matrix & Conclusion (2:20 – 3:00)
-**Driver Action**:  
-In terminal, run:
-```bash
-reprove benchmark --replay
-```
+## 🎬 Script
 
-**Speaker**:  
-> *"Across our ground-truth benchmark suite, REPROVE delivers **100% precision, 100% recall**, and runs in **30 milliseconds** using our replay cache.*  
-> *Every single report is published as reproducible Markdown and self-contained HTML that data science teams can integrate into GitHub Actions to fail PRs with `--fail-on-leak`.*  
-> *REPROVE is 100% open-source under the Apache-2.0 license, powered by open-weight AI, and ready for production.*  
-> *Thank you, and we welcome your questions!"*
+### 1. The problem (0:00-0:30)
+> "This notebook reports a test AUC of about 0.77. The features are actually pure random noise. The score is fake,
+> because feature selection was fitted on all the data **before** the train/test split. This is called evaluation
+> leakage, and it is common in tutorials, Kaggle notebooks and papers. Linters don't catch it, and asking a chatbot
+> gives you an opinion, not proof."
+
+### 2. How it works (0:30-1:00)
+> "REPROVE is an open-source agent. An open-weight model, Qwen2.5-Coder running locally through Ollama, reads the code
+> and decides which checks to run. The checks themselves are deterministic code: AST analysis and hashing the
+> rows of the real split. Then REPROVE rewrites the user's own code to fix the flaw, re-runs both versions on five
+> seeds, and runs a paired t-test. The LLM never decides whether something is confirmed. The measurement does."
+
+### 3. Live audit (1:00-2:00)
+**Driver**: `reprove audit examples/01_clear_leak_scaler_before_split.ipynb --replay --no-fail-on-leak`
+(or in the UI: example 01 → Run audit)
+
+> "First line: mode is a replay of a recorded **Qwen** run, so you see exactly what the agent did. In the trace, the
+> rows marked `agent` are the model's own choices: it suspected the scaler and SelectKBest in cell 3 and called the
+> fit-before-split check. Rows marked `coverage` are checks it didn't call, which REPROVE runs anyway, so an early
+> 'finish' can never hide a leak."
+>
+> "Now the proof. Original AUC **[0.77]**, corrected AUC **[0.47]**, which is chance level. That's a drop of **[0.30]**, worse on
+> **[5 of 5]** seeds, p **[< 0.0001]**. So this is CONFIRMED. And here is the fix as a diff of their own code: split first,
+> fit on the training split only."
+
+### 4. No false alarms, and honesty (2:00-2:30)
+**Driver**: notebook 02, then notebook 04.
+
+> "On a correctly built pipeline: clean, no findings. And here's a case where the test set is used to pick
+> max_depth. REPROVE finds it and shows the exact loop, but says SUSPECTED, because it has no automatic fix for this
+> type yet and won't claim a number it didn't measure."
+
+### 5. Close (2:30-3:00)
+**Driver**: show the benchmark table from the README (or run `reprove benchmark` if the recorded runs are present).
+
+> "On our six benchmark cases, including two scripts with unfamiliar variable names, every status matches the
+> planted truth, and a real-but-harmless scaler leak is correctly reported as *not* inflating the score.
+> It's Apache-2.0, it runs fully offline on an open-weight model, and every number in the report comes from code
+> that actually ran. Thank you!"
 
 ---
 
-## 🎯 Anticipated Judge Q&A & Bulletproof Responses
+## 🎯 Likely judge questions
 
-### Q1: *"Why can't I just paste my code into ChatGPT or Claude?"*
-**Response**:  
-> *"Three reasons: First, cloud LLMs hallucinate metrics and line numbers. Second, they have zero execution environment—they cannot execute the code to tell you whether the bug actually changed the test score by 1% or 25%. Third, enterprise ML code often contains proprietary IP that cannot be sent to third-party cloud APIs. REPROVE runs locally with open-weight models (Qwen2.5-Coder) and grounds every claim in real, executed counterfactual reruns."*
+**"Why not just paste the code into ChatGPT?"**
+> "A chatbot gives an opinion. We measure the effect by running the code with and without the flaw on five seeds. It
+> also runs locally on an open-weight model, so private code never leaves the machine."
 
-### Q2: *"How is this different from flake8, Ruff, or SonarQube?"*
-**Response**:  
-> *"Linters rely on static AST pattern matching. They cannot trace dynamic dataflow across notebook cells, cannot hash multi-table row overlaps across splits, and cannot perform statistical significance tests on metric shifts. A linter flags syntax; REPROVE measures empirical evaluation inflation."*
+**"What does the LLM actually do, then?"**
+> "It plans the investigation: it reads the code, forms a hypothesis, picks which tool to run, and decides what to
+> check next based on the result. Its output is schema-constrained JSON and is validated. If it's invalid twice, we fall back to a fixed plan and
+> the report says so."
 
-### Q3: *"What happens if Ollama is not installed or the user is offline on a laptop?"*
-**Response**:  
-> *"REPROVE has a dual fallback guarantee: First, we have an instant Replay Cache that replays verified audits in under 40 milliseconds with zero network calls. Second, if an unknown script is audited without Ollama, REPROVE automatically fails over to a deterministic heuristic plan that executes the evidence tools and verifier engine directly without dropping a single verification check."*
+**"How do you decide CONFIRMED?"**
+> "Code decides, not the model: the corrected version must score worse on average, and a one-sided paired t-test over
+> the per-seed differences must give p < 0.05, with at least 3 seeds. Otherwise it's NOT_CONFIRMED or SUSPECTED, with the reason."
 
-### Q4: *"How do you guarantee the agent doesn't confirm a fake leak?"*
-**Response**:  
-> *"Through our architectural invariant: In REPROVE's data model, `FindingStatus.CONFIRMED` is strictly unreachable by the LLM. It can only be set by the verifier engine when both conditions are satisfied: (1) a deterministic evidence tool produced a verified `EvidenceObject`, and (2) the empirical delta $|Δ|$ strictly exceeds twice the multi-seed noise standard deviation ($2σ$)."*
+**"Is replay cheating?"**
+> "Replay re-shows a run we recorded earlier with the real model, keyed by a hash of the exact code. The report
+> labels it as a replay and shows which mode produced it. Running it live gives the same tool results. Only the
+> model's wording can differ."
+
+**"What doesn't it handle?"**
+> "Automatic fixes cover the common sklearn pattern of fitting before `train_test_split`, and duplicate rows. Test-set
+> model selection is detected but not auto-fixed, and target leakage is on the roadmap. It also executes the audited
+> code, so you should only audit code you trust."
+
+**"Your benchmark is tiny."**
+> "Yes, six cases we wrote ourselves. It's a sanity check, not an accuracy claim. That's why we included cases where
+> the right answer is 'clean' or 'not confirmed'."
