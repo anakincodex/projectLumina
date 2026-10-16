@@ -19,7 +19,7 @@ Every claim must be anchored to concrete evidence. If a check cannot run, it is 
 
 ---
 
-## 🔬 Supported Leak Types (Scope)
+##  Supported Leak Types (Scope)
 
 1. **Preprocessing Fitted Before Train/Test Split (Type 1)**: Scalers, imputers, encoders, PCA, or feature selection fitted on the whole dataset prior to splitting.
 2. **Train/Test Sample Duplication & Cross-Split Overlap (Type 2)**: Exact or near-duplicate rows (tabular hashing) or identical samples caused by premature oversampling or repeated group records across splits.
